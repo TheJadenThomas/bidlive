@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 import { Link } from 'react-router-dom';
+import { io } from 'socket.io-client';
+import { API_BASE_URL, SOCKET_URL } from '../config/api';
 
 const AuctionList = () => {
   const [auctions, setAuctions] = useState([]);
@@ -10,7 +12,7 @@ const AuctionList = () => {
   useEffect(() => {
     const fetchAuctions = async () => {
       try {
-        const { data } = await axios.get('http://localhost:5000/api/auctions');
+        const { data } = await axios.get(`${API_BASE_URL}/auctions`);
         setAuctions(data);
         setLoading(false);
       } catch (err) {
@@ -19,6 +21,19 @@ const AuctionList = () => {
       }
     };
     fetchAuctions();
+
+    const socket = io(SOCKET_URL);
+    socket.on('globalBidUpdate', (data) => {
+      setAuctions((prevAuctions) => 
+        prevAuctions.map((auction) => 
+          auction._id === data.auctionId 
+            ? { ...auction, currentBid: data.currentBid } 
+            : auction
+        )
+      );
+    });
+
+    return () => socket.disconnect();
   }, []);
 
   if (loading) return <div className="text-center mt-20 text-xl">Loading auctions...</div>;

@@ -53,6 +53,14 @@ module.exports = (io) => {
           timestamp: bid.timestamp,
         });
 
+        // Broadcast globally for dashboards and lists
+        io.emit('globalBidUpdate', {
+          auctionId,
+          currentBid: bidAmount,
+          lastBidder: userId,
+          timestamp: bid.timestamp,
+        });
+
       } catch (error) {
         console.error(error);
         socket.emit('bidError', { message: 'Failed to place bid' });

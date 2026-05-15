@@ -3,6 +3,7 @@ import { useParams } from 'react-router-dom';
 import axios from 'axios';
 import { io } from 'socket.io-client';
 import { AuthContext } from '../context/AuthContext';
+import { API_BASE_URL, SOCKET_URL } from '../config/api';
 
 const AuctionDetails = () => {
   const { id } = useParams();
@@ -19,7 +20,7 @@ const AuctionDetails = () => {
     // 1. Fetch Initial Data
     const fetchAuction = async () => {
       try {
-        const { data } = await axios.get(`http://localhost:5000/api/auctions/${id}`);
+        const { data } = await axios.get(`${API_BASE_URL}/auctions/${id}`);
         setAuction(data);
         setBidAmount(data.currentBid + 1);
         setLoading(false);
@@ -31,7 +32,7 @@ const AuctionDetails = () => {
     fetchAuction();
 
     // 2. Setup Socket.IO
-    const newSocket = io('http://localhost:5000');
+    const newSocket = io(SOCKET_URL);
     setSocket(newSocket);
 
     newSocket.emit('joinAuction', id);

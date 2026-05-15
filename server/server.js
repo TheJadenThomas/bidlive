@@ -15,15 +15,40 @@ dotenv.config();
 connectDB();
 
 const app = express();
+const allowedOrigins = (process.env.CLIENT_URL || 'http://localhost:5173')
+  .split(',')
+  .map((origin) => origin.trim())
+  .filter(Boolean);
+
+const isAllowedOrigin = (origin) => {
+  if (!origin) {
+    return true;
+  }
+
+  if (allowedOrigins.includes(origin)) {
+    return true;
+  }
+
+  try {
+    const { hostname } = new URL(origin);
+    return hostname === 'localhost' || hostname.endsWith('.vercel.app');
+  } catch {
+    return false;
+  }
+};
+
+const corsOptions = {
+  origin(origin, callback) {
+    callback(null, isAllowedOrigin(origin));
+  },
+  credentials: true,
+};
 
 // Security Middleware
 app.use(helmet());
 const mongoSanitize = require('express-mongo-sanitize');
 app.use(mongoSanitize());
-app.use(cors({
-  origin: process.env.CLIENT_URL || 'http://localhost:5173',
-  credentials: true,
-}));
+app.use(cors(corsOptions));
 
 // Rate limiting
 const limiter = rateLimit({
@@ -53,8 +78,11 @@ const server = http.createServer(app);
 // Socket.io setup
 const io = new Server(server, {
   cors: {
-    origin: process.env.CLIENT_URL || 'http://localhost:5173',
+    origin(origin, callback) {
+      callback(null, isAllowedOrigin(origin));
+    },
     methods: ['GET', 'POST'],
+    credentials: true,
   },
 });
 

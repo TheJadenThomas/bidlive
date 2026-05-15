@@ -2,6 +2,8 @@ import React, { useContext, useEffect, useState } from 'react';
 import { AuthContext } from '../context/AuthContext';
 import { Link, useNavigate } from 'react-router-dom';
 import axios from 'axios';
+import { io } from 'socket.io-client';
+import { API_BASE_URL, SOCKET_URL } from '../config/api';
 
 const Dashboard = () => {
   const { user, logout } = useContext(AuthContext);
@@ -16,7 +18,7 @@ const Dashboard = () => {
 
     const fetchMyAuctions = async () => {
       try {
-        const { data } = await axios.get('http://localhost:5000/api/auctions');
+        const { data } = await axios.get(`${API_BASE_URL}/auctions`);
         // Filter auctions created by the logged-in user
         const userAuctions = data.filter(auction => auction.createdBy._id === user._id);
         setMyAuctions(userAuctions);
@@ -26,6 +28,19 @@ const Dashboard = () => {
     };
 
     fetchMyAuctions();
+
+    const socket = io(SOCKET_URL);
+    socket.on('globalBidUpdate', (data) => {
+      setMyAuctions((prevAuctions) => 
+        prevAuctions.map((auction) => 
+          auction._id === data.auctionId 
+            ? { ...auction, currentBid: data.currentBid } 
+            : auction
+        )
+      );
+    });
+
+    return () => socket.disconnect();
   }, [user, navigate]);
 
   const handleLogout = () => {
@@ -67,7 +82,7 @@ const Dashboard = () => {
           {myAuctions.map((auction) => (
             <div key={auction._id} className="bg-white rounded-lg shadow-sm border p-4">
               <h3 className="text-lg font-bold truncate">{auction.title}</h3>
-              <p className="text-gray-600 mb-2">Base Price: ${auction.basePrice}</p>
+              <p className="text-gray-600 mb-2">Current Bid: ${auction.currentBid}</p>
               <div className="flex justify-between items-center mt-4">
                 <span className={`px-2 py-1 text-xs rounded-full ${auction.status === 'active' ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-gray-800'}`}>
                   {auction.status}
