@@ -1,0 +1,52 @@
+name: BidLive CI/CD
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+
+    strategy:
+      matrix:
+        node-version: [18.x]
+
+    steps:
+    - uses: actions/checkout@v3
+
+    - name: Use Node.js ${{ matrix.node-version }}
+      uses: actions/setup-node@v3
+      with:
+        node-version: ${{ matrix.node-version }}
+        cache: 'npm'
+        cache-dependency-path: '**/package-lock.json'
+
+    # Backend Setup
+    - name: Install Backend Dependencies
+      working-directory: ./server
+      run: npm ci
+
+    # Frontend Setup
+    - name: Install Frontend Dependencies
+      working-directory: ./client
+      run: npm ci
+
+    - name: Build Frontend
+      working-directory: ./client
+      run: npm run build
+
+  deploy-backend:
+    needs: build-and-test
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+    steps:
+      - name: Deploy to Render
+        env:
+          deploy_url: ${{ secrets.RENDER_DEPLOY_HOOK_URL }}
+        run: |
+          curl "$deploy_url"
+
+  # Vercel deploys frontend automatically on push to main via Vercel GitHub App.
