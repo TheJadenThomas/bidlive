@@ -1,66 +1,112 @@
-pip install langchain langchain-ollama langgraph
+import json
+from pathlib import Path
 
-import re
-from langchain_ollama import ChatOllama
-from langchain.agents import create_agent   # older versions: from langgraph.prebuilt import create_react_agent
-from src.agent.tools import policy_search, fee_calculator  # your Day 17 tools, as @tool functions
+SESSIONS_FILE = Path("data/sessions_demo.json")
+MAX_TURNS = 5            # keep last N user/assistant pairs
+MAX_HISTORY_CHARS = 4000 # rough budget (~1000 tokens) for history
 
-SYSTEM_PROMPT = """You are a bank policy assistant.
-RULES:
-1. ALWAYS call policy_search before answering any policy question. Never answer from memory.
-2. Use fee_calculator only for fee/charge calculations, and only after policy_search.
-3. Answer ONLY from tool results and cite sources (doc_id, section).
-4. If the tools return nothing relevant, reply exactly: "Not found in policy docs."
-5. Never request, store, or repeat personal data (account numbers, PAN/Aadhaar, phone, email).
-6. If the question is not about bank policy, politely refuse."""
+class SessionStore:
+    def __init__(self, path=SESSIONS_FILE):
+        self.path = Path(path)
+        self.sessions = {}
+        if self.path.exists():
+            try:
+                self.sessions = json.loads(self.path.read_text(encoding="utf-8"))
+            except json.JSONDecodeError:
+                self.sessions = {}
 
-llm = ChatOllama(model="llama3.2:3b", temperature=0)
+    def add_turn(self, session_id, user_msg, assistant_msg):
+        turns = self.sessions.setdefault(session_id, [])
+        turns.append({"user": user_msg, "assistant": assistant_msg})
+        self.sessions[session_id] = turns[-MAX_TURNS * 2:]  # hard cap stored turns
+        self._save()
 
-agent = create_agent(
-    model=llm,
-    tools=[policy_search, fee_calculator],
-    system_prompt=SYSTEM_PROMPT,
-)
+    def get_history(self, session_id):
+        """Return recent turns as chat messages, trimmed to the char budget."""
+        turns = self.sessions.get(session_id, [])[-MAX_TURNS:]
+        # drop oldest turns until under budget
+        while turns and sum(len(t["user"]) + len(t["assistant"]) for t in turns) > MAX_HISTORY_CHARS:
+            turns = turns[1:]
+        messages = []
+        for t in turns:
+            messages.append(("user", t["user"]))
+            messages.append(("assistant", t["assistant"]))
+        return messages
 
-# --- Guardrails (code-level, because a 3B model won't follow rules reliably) ---
-PII_PATTERNS = [
-    r"\b\d{9,18}\b",                          # account / card numbers
-    r"\b\d{4}\s?\d{4}\s?\d{4}\b",             # Aadhaar-style
-    r"\b[A-Z]{5}\d{4}[A-Z]\b",                # PAN
-    r"[\w.+-]+@[\w-]+\.[\w.]+",               # email
-]
+    def clear(self, session_id):
+        self.sessions.pop(session_id, None)
+        self._save()
 
-def contains_pii(text: str) -> bool:
-    return any(re.search(p, text) for p in PII_PATTERNS)
+    def _save(self):
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        self.path.write_text(json.dumps(self.sessions, indent=2), encoding="utf-8")
 
-def ask_agent(question: str) -> dict:
-    if contains_pii(question):
-        return {"answer": "Please don't share personal data. I can only answer general bank policy questions.",
-                "tools_used": []}
 
-    result = agent.invoke({"messages": [("user", question)]})
-    msgs = result["messages"]
 
-    tools_used = [m.name for m in msgs if m.type == "tool"]
 
-    # Enforce "always search before answer"
-    if "policy_search" not in tools_used:
-        forced = policy_search.invoke({"query": question})
-        result = agent.invoke({"messages": [
-            ("user", f"{question}\n\nPolicy search results:\n{forced}\nAnswer using only these.")
-        ]})
-        msgs = result["messages"]
-        tools_used = ["policy_search (forced)"] + [m.name for m in msgs if m.type == "tool"]
+Step 3: Update src/agent/agent.py
 
-    return {"answer": msgs[-1].content, "tools_used": tools_used}
+Add at the top with the other imports:
 
-from src.agent.agent import ask_agent
+python
+from src.chat.session import SessionStore
+store = SessionStore()
 
-print("Bank Policy Agent (type 'exit' to quit)")
+
+Change the function signature:
+
+python
+def ask_agent(question: str, session_id: str = "default") -> dict:
+
+Find the first agent call:
+
+python
+result = agent.invoke({"messages": [("user", question)]})
+
+Replace with:
+
+python
+history = store.get_history(session_id)
+result = agent.invoke({"messages": history + [("user", question)]})
+
+In the forced-search block, change the agent.invoke({"messages": [ call to include history too:
+
+python
+result = agent.invoke({"messages": history + [
+    ("user", f"{question}\n\nPolicy search results:\n{forced}\nAnswer using only these.")
+]})
+
+Right before the final return, save the turn:
+
+python
+answer = msgs[-1].content
+store.add_turn(session_id, question, answer)
+return {"answer": answer, "tools_used": tools_used}
+
+Also save the PII-blocked case? Don’t. Leave the early return as is, so personal data never enters memory.
+
+Step 4: Update cli/agent_chat.py
+
+python
+import uuid
+from src.agent.agent import ask_agent, store
+
+session_id = input("Session ID (press Enter for new): ").strip() or str(uuid.uuid4())[:8]
+print(f"Session: {session_id}  (commands: /reset, exit)")
+
 while True:
     q = input("\nYou: ").strip()
     if q.lower() in {"exit", "quit"}:
         break
-    out = ask_agent(q)
+    if q == "/reset":
+        store.clear(session_id)
+        print("Session cleared.")
+        continue
+    out = ask_agent(q, session_id)
     print(f"\nTools used: {out['tools_used']}")
     print(f"Agent: {out['answer']}")
+
+Step 5: Test multi-turn
+
+powershell
+python -m cli.agent_chat
